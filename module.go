@@ -3,7 +3,7 @@
 // which holds the RA-TLS holder-of-key session to the vault constellation. The
 // module embeds no key material and no vault crypto: one token == one vault, one
 // object == one vault key, and the consumption ops (Sign/Decrypt/Wrap/Unwrap)
-// proxy to the agent. See .operations/enclave-vaults (vHSM plan, Phase 4).
+// proxy to the agent. See the README for the architecture and scope.
 package main
 
 /*
