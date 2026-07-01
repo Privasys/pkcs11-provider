@@ -29,11 +29,10 @@ func C_SignInit(h C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM_PTR, hKey C.CK_
 	mech := pMechanism.mechanism
 	switch mech {
 	case C.CKM_ECDSA_SHA256:
-		// message-sign: the vault hashes (ECDSA-P256-SHA256). Supported today.
+		// message-sign: the vault hashes (ECDSA-P256-SHA256).
 	case C.CKM_ECDSA:
-		// pre-hashed digest sign: needs a raw/pre-hashed vault sign mode; fail
-		// closed until then (Phase 4 dependency) rather than double-hash.
-		return C.CKR_FUNCTION_NOT_SUPPORTED
+		// pre-hashed digest sign: the caller passes a 32-byte SHA-256 digest the
+		// vault signs raw (no re-hash). What TLS stacks / code-signers use.
 	default:
 		return C.CKR_MECHANISM_INVALID
 	}
@@ -55,7 +54,7 @@ func C_Sign(h C.CK_SESSION_HANDLE, pData C.CK_BYTE_PTR, ulDataLen C.CK_ULONG, pS
 	if pulSignatureLen == nil {
 		return C.CKR_ARGUMENTS_BAD
 	}
-	var keyHandle uint
+	var keyHandle, mech uint
 	rv := C.CK_RV(C.CKR_OK)
 	ok := withSession(uint(h), func(s *session) {
 		if s.signKey == 0 {
@@ -63,6 +62,7 @@ func C_Sign(h C.CK_SESSION_HANDLE, pData C.CK_BYTE_PTR, ulDataLen C.CK_ULONG, pS
 			return
 		}
 		keyHandle = s.signKey
+		mech = s.signMech
 	})
 	if !ok {
 		return C.CKR_SESSION_HANDLE_INVALID
@@ -89,7 +89,10 @@ func C_Sign(h C.CK_SESSION_HANDLE, pData C.CK_BYTE_PTR, ulDataLen C.CK_ULONG, pS
 	if pData != nil && ulDataLen > 0 {
 		msg = C.GoBytes(unsafe.Pointer(pData), C.int(ulDataLen))
 	}
-	sig, err := agentSign(o.name, "ES256", msg)
+	// CKM_ECDSA: msg is a pre-computed digest the vault signs raw; CKM_ECDSA_SHA256:
+	// msg is the message the vault hashes.
+	prehashed := mech == uint(C.CKM_ECDSA)
+	sig, err := agentSign(o.name, "ES256", msg, prehashed)
 	if err != nil {
 		return C.CKR_FUNCTION_FAILED
 	}

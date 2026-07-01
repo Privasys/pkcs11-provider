@@ -73,12 +73,15 @@ func agentListKeys() ([]agentKey, error) {
 }
 
 // agentSign asks the agent to sign msg with the named key. alg is a JOSE alg
-// (ES256). The returned signature is raw r||s (64 bytes for P-256), which is
-// exactly what PKCS#11 CKM_ECDSA* expects — no DER re-encoding.
-func agentSign(name, alg string, msg []byte) ([]byte, error) {
-	reqBody, _ := json.Marshal(map[string]string{
-		"alg":   alg,
-		"value": base64.RawURLEncoding.EncodeToString(msg),
+// (ES256). When prehashed is set, msg is a 32-byte SHA-256 digest the vault signs
+// raw (CKM_ECDSA); otherwise msg is the message the vault hashes (CKM_ECDSA_SHA256).
+// The returned signature is raw r||s (64 bytes for P-256), which is exactly what
+// PKCS#11 CKM_ECDSA* expects — no DER re-encoding.
+func agentSign(name, alg string, msg []byte, prehashed bool) ([]byte, error) {
+	reqBody, _ := json.Marshal(map[string]any{
+		"alg":       alg,
+		"value":     base64.RawURLEncoding.EncodeToString(msg),
+		"prehashed": prehashed,
 	})
 	u := agentBase() + "/keys/" + url.PathEscape(name) + "/sign"
 	resp, err := httpClient.Post(u, "application/json", bytes.NewReader(reqBody))
