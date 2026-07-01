@@ -29,6 +29,10 @@ static CK_FUNCTION_LIST functionList = {
     .C_GetAttributeValue = C_GetAttributeValue,
     .C_SignInit = C_SignInit,
     .C_Sign = C_Sign,
+    .C_DecryptInit = C_DecryptInit,
+    .C_Decrypt = C_Decrypt,
+    .C_WrapKey = C_WrapKey,
+    .C_DestroyObject = C_DestroyObject,
 };
 
 CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList) {

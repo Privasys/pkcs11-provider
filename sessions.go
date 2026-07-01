@@ -14,6 +14,10 @@ type session struct {
 	// SignInit/Sign one-shot state.
 	signKey  uint // object handle of the active signing key (0 = none)
 	signMech uint // active CKM_*
+
+	// DecryptInit/Decrypt one-shot state (CKM_AES_GCM).
+	decryptKey uint   // object handle of the active AES key (0 = none)
+	decryptIV  []byte // GCM IV from the mechanism params
 }
 
 var (

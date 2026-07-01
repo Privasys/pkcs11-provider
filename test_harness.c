@@ -72,6 +72,29 @@ int main(int argc, char **argv) {
     printf("C_Sign             rv=0x%08lx  siglen=%lu\n", rv, (unsigned long)siglen);
   }
 
+  /* Find AES secret keys -> Decrypt (agent unwrapKey) + Destroy (agent DELETE). */
+  CK_OBJECT_CLASS sec = CKO_SECRET_KEY;
+  CK_ATTRIBUTE tmpl2[] = {{CKA_CLASS, &sec, sizeof sec}};
+  fl->C_FindObjectsInit(sess, tmpl2, 1);
+  CK_OBJECT_HANDLE aesobjs[8]; CK_ULONG an = 0;
+  fl->C_FindObjects(sess, aesobjs, 8, &an);
+  fl->C_FindObjectsFinal(sess);
+  printf("AES keys found     count=%lu\n", (unsigned long)an);
+  if (an > 0) {
+    CK_BYTE iv[12] = {0};
+    CK_GCM_PARAMS gcm = {iv, sizeof iv, 96, NULL_PTR, 0, 128};
+    CK_MECHANISM dm = {CKM_AES_GCM, &gcm, sizeof gcm};
+    rv = fl->C_DecryptInit(sess, &dm, aesobjs[0]);
+    printf("C_DecryptInit      rv=0x%08lx\n", rv);
+    CK_BYTE ctin[] = "ciphertext-bytes-here";
+    CK_BYTE out[64]; CK_ULONG outlen = sizeof out;
+    rv = fl->C_Decrypt(sess, ctin, sizeof ctin - 1, out, &outlen);
+    out[outlen < sizeof out ? outlen : sizeof out - 1] = 0;
+    printf("C_Decrypt          rv=0x%08lx  outlen=%lu  pt='%s'\n", rv, (unsigned long)outlen, out);
+    rv = fl->C_DestroyObject(sess, aesobjs[0]);
+    printf("C_DestroyObject    rv=0x%08lx\n", rv);
+  }
+
   rv = fl->C_CloseSession(sess);
   printf("C_CloseSession     rv=0x%08lx\n", rv);
 
