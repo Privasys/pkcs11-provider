@@ -1,0 +1,3 @@
+# Normalise line endings: this is a C/Go project built on Linux.
+* text=auto eol=lf
+*.so binary
