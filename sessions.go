@@ -19,6 +19,10 @@ type session struct {
 	// DecryptInit/Decrypt one-shot state (CKM_AES_GCM).
 	decryptKey uint   // object handle of the active AES key (0 = none)
 	decryptIV  []byte // GCM IV from the mechanism params
+
+	// EncryptInit/Encrypt one-shot state (CKM_AES_GCM).
+	encryptKey uint   // object handle of the active AES key (0 = none)
+	encryptIV  []byte // GCM IV from the mechanism params
 }
 
 var (

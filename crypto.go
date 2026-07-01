@@ -22,6 +22,103 @@ func gcmIV(pMechanism C.CK_MECHANISM_PTR) ([]byte, bool) {
 	return C.GoBytes(unsafe.Pointer(p.pIv), C.int(p.ulIvLen)), true
 }
 
+// gcmTagLen is the AES-GCM tag length in bytes; the vault appends the tag to
+// the ciphertext (ring's seal-in-place), matching PKCS#11's ct||tag output.
+const gcmTagLen = 16
+
+//export C_EncryptInit
+func C_EncryptInit(h C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM_PTR, hKey C.CK_OBJECT_HANDLE) C.CK_RV {
+	if !isInited() {
+		return C.CKR_CRYPTOKI_NOT_INITIALIZED
+	}
+	if pMechanism == nil {
+		return C.CKR_ARGUMENTS_BAD
+	}
+	o, ok := objByHandle(uint(hKey))
+	if !ok {
+		return C.CKR_KEY_HANDLE_INVALID
+	}
+	if o.class != C.CKO_SECRET_KEY || o.keyType != C.CKK_AES {
+		return C.CKR_KEY_TYPE_INCONSISTENT
+	}
+	if pMechanism.mechanism != C.CKM_AES_GCM {
+		return C.CKR_MECHANISM_INVALID
+	}
+	// The caller supplies the GCM nonce (and owns its per-key uniqueness); the
+	// vault seals with it. 12 bytes, the vault's fixed nonce length.
+	iv, ok := gcmIV(pMechanism)
+	if !ok || len(iv) != 12 {
+		return C.CKR_MECHANISM_PARAM_INVALID
+	}
+	if !withSession(uint(h), func(s *session) {
+		s.encryptKey = uint(hKey)
+		s.encryptIV = iv
+	}) {
+		return C.CKR_SESSION_HANDLE_INVALID
+	}
+	return C.CKR_OK
+}
+
+//export C_Encrypt
+func C_Encrypt(h C.CK_SESSION_HANDLE, pData C.CK_BYTE_PTR, ulDataLen C.CK_ULONG, pEncryptedData C.CK_BYTE_PTR, pulEncryptedDataLen C.CK_ULONG_PTR) C.CK_RV {
+	if !isInited() {
+		return C.CKR_CRYPTOKI_NOT_INITIALIZED
+	}
+	if pulEncryptedDataLen == nil {
+		return C.CKR_ARGUMENTS_BAD
+	}
+	var keyHandle uint
+	var iv []byte
+	rv := C.CK_RV(C.CKR_OK)
+	if !withSession(uint(h), func(s *session) {
+		if s.encryptKey == 0 {
+			rv = C.CKR_OPERATION_NOT_INITIALIZED
+			return
+		}
+		keyHandle = s.encryptKey
+		iv = s.encryptIV
+	}) {
+		return C.CKR_SESSION_HANDLE_INVALID
+	}
+	if rv != C.CKR_OK {
+		return rv
+	}
+
+	// Length query: GCM output is plaintext length + the appended tag.
+	outLen := ulDataLen + gcmTagLen
+	if pEncryptedData == nil {
+		*pulEncryptedDataLen = outLen
+		return C.CKR_OK
+	}
+	if *pulEncryptedDataLen < outLen {
+		*pulEncryptedDataLen = outLen
+		return C.CKR_BUFFER_TOO_SMALL
+	}
+
+	o, ok := objByHandle(keyHandle)
+	if !ok {
+		return C.CKR_KEY_HANDLE_INVALID
+	}
+	var pt []byte
+	if pData != nil && ulDataLen > 0 {
+		pt = C.GoBytes(unsafe.Pointer(pData), C.int(ulDataLen))
+	}
+	ct, err := agentWrap(o.name, pt, iv)
+	if err != nil {
+		return C.CKR_FUNCTION_FAILED
+	}
+	if C.CK_ULONG(len(ct)) > outLen {
+		return C.CKR_FUNCTION_FAILED
+	}
+	if len(ct) > 0 {
+		dst := unsafe.Slice((*byte)(unsafe.Pointer(pEncryptedData)), len(ct))
+		copy(dst, ct)
+	}
+	*pulEncryptedDataLen = C.CK_ULONG(len(ct))
+	withSession(uint(h), func(s *session) { s.encryptKey = 0; s.encryptIV = nil })
+	return C.CKR_OK
+}
+
 //export C_DecryptInit
 func C_DecryptInit(h C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM_PTR, hKey C.CK_OBJECT_HANDLE) C.CK_RV {
 	if !isInited() {

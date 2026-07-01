@@ -291,12 +291,20 @@ func C_GetAttributeValue(h C.CK_SESSION_HANDLE, hObject C.CK_OBJECT_HANDLE, pTem
 				b = 1
 			}
 			setAttr(a, []byte{b})
-		case C.CKA_WRAP, C.CKA_UNWRAP:
+		case C.CKA_WRAP, C.CKA_UNWRAP, C.CKA_ENCRYPT, C.CKA_DECRYPT:
 			b := byte(0)
 			if o.class == C.CKO_SECRET_KEY {
 				b = 1
 			}
 			setAttr(a, []byte{b})
+		case C.CKA_VALUE_LEN:
+			// AES-256 key length; consumers (Java SunPKCS11) size the key from it.
+			if o.keyType == C.CKK_AES {
+				setAttr(a, ulongBytes(32))
+			} else {
+				a.ulValueLen = C.CK_UNAVAILABLE_INFORMATION
+				rv = C.CKR_ATTRIBUTE_TYPE_INVALID
+			}
 		case C.CKA_SENSITIVE:
 			// Vault key material never leaves the enclave.
 			b := byte(0)

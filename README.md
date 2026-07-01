@@ -42,11 +42,23 @@ Implemented: `C_Initialize`/`Finalize`, `C_GetInfo`, slot/token info, mechanism
 list, sessions, `C_Login` (session-attach), `C_FindObjects*` (each EC key
 surfaces as a private key **plus a public-key twin** carrying `CKA_EC_POINT`),
 `C_GetAttributeValue`, `C_SignInit`/`C_Sign` and the streaming
-`C_SignUpdate`/`C_SignFinal`, `C_Decrypt` (AES-GCM via the agent `unwrapKey`),
-`C_DestroyObject`, `C_GenerateRandom` (host CSPRNG — local nonces, not vault
-material). Every remaining `CK_FUNCTION_LIST` slot is a spec-appropriate
-not-supported stub — the list is complete, as the spec requires (consumers call
-through it without NULL checks).
+`C_SignUpdate`/`C_SignFinal`, `C_Encrypt`/`C_Decrypt` (AES-GCM via the agent
+`wrapKey`/`unwrapKey` — the caller supplies the 12-byte GCM nonce and owns its
+per-key uniqueness), `C_DestroyObject`, `C_GenerateRandom` (host CSPRNG —
+local nonces, not vault material). Every remaining `CK_FUNCTION_LIST` slot is a
+spec-appropriate not-supported stub — the list is complete, as the spec
+requires (consumers call through it without NULL checks).
+
+### Java (SunPKCS11)
+
+Vault AES keys surface as standalone `KeyStore` aliases (EC private keys need
+certificate objects Java-side, which the module does not serve yet), and
+`Cipher AES/GCM/NoPadding` drives the vault encrypt/decrypt:
+
+```
+printf 'name = PrivasysVault\nlibrary = /path/to/libprivasys_pkcs11.so\n' > p11.cfg
+PRIVASYS_PKCS11_VAULT=<vault-id> java tools/P11Aes.java p11.cfg
+```
 
 ### Signing
 

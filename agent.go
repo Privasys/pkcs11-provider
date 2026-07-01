@@ -161,6 +161,33 @@ func agentSign(name, alg string, msg []byte, prehashed bool) ([]byte, error) {
 	return sig, nil
 }
 
+// agentWrap encrypts pt under the named AES key in the vault with the
+// caller-supplied GCM iv (PKCS#11 CKM_AES_GCM fixes the nonce caller-side).
+// Returns ciphertext||tag. Backs C_Encrypt(CKM_AES_GCM).
+func agentWrap(name string, pt, iv []byte) ([]byte, error) {
+	reqBody, _ := json.Marshal(map[string]string{
+		"value": base64.RawURLEncoding.EncodeToString(pt),
+		"iv":    base64.RawURLEncoding.EncodeToString(iv),
+	})
+	u := agentBase() + "/keys/" + url.PathEscape(name) + "/wrapKey"
+	resp, err := httpClient.Post(u, "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("agent wrap: HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	var out struct {
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil || out.Value == "" {
+		return nil, fmt.Errorf("agent wrap: bad response: %s", string(body))
+	}
+	return b64any(out.Value)
+}
+
 // agentUnwrap decrypts ct (with the caller-supplied GCM iv) under the named AES
 // key in the vault. Backs C_Decrypt(CKM_AES_GCM).
 func agentUnwrap(name string, ct, iv []byte) ([]byte, error) {

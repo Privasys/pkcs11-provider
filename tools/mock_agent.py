@@ -34,12 +34,27 @@ class H(http.server.BaseHTTPRequestHandler):
         else:
             self._j(404, {"error": "not found"})
 
+    def _body(self):
+        n = int(self.headers.get("Content-Length", 0))
+        return json.loads(self.rfile.read(n)) if n else {}
+
+    @staticmethod
+    def _b64d(s):
+        return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
     def do_POST(self):
         if self.path.endswith("/sign"):
             sig = base64.urlsafe_b64encode(bytes(range(64))).rstrip(b"=").decode()
             self._j(200, {"kid": "tls-key", "alg": "ES256", "value": sig})
+        elif self.path.endswith("/wrapKey"):
+            # Structural GCM: ct = pt || 16-byte dummy tag, so consumer
+            # round-trips (harness, Java Cipher) recover the plaintext.
+            pt = self._b64d(self._body().get("value", ""))
+            ct = base64.urlsafe_b64encode(pt + b"\x00" * 16).rstrip(b"=").decode()
+            self._j(200, {"kid": "data-key", "value": ct, "iv": "AAAAAAAAAAAAAAAA"})
         elif self.path.endswith("/unwrapKey"):
-            pt = base64.urlsafe_b64encode(b"decrypted-plaintext").rstrip(b"=").decode()
+            ct = self._b64d(self._body().get("value", ""))
+            pt = base64.urlsafe_b64encode(ct[:-16] if len(ct) > 16 else b"").rstrip(b"=").decode()
             self._j(200, {"kid": "data-key", "value": pt})
         else:
             self._j(404, {"error": "not found"})

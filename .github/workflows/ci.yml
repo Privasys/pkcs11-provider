@@ -60,3 +60,18 @@ jobs:
             -key "pkcs11:object=tls-key;type=private" -subj "/CN=ci" -days 1 -out /tmp/c.pem
           test -s /tmp/c.pem
           kill "$(cat /tmp/agent.pid)" || true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Third-party consumer (Java SunPKCS11)
+        run: |
+          python3 tools/mock_agent.py & echo $! > /tmp/agent.pid
+          sleep 1
+          printf 'name = PrivasysVault\nlibrary = %s/libprivasys_pkcs11.so\n' "$PWD" > /tmp/p11.cfg
+          PRIVASYS_PKCS11_VAULT=ci-vault PRIVASYS_PKCS11_AGENT=http://127.0.0.1:8210 \
+            java tools/P11Aes.java /tmp/p11.cfg | tee /tmp/java.out
+          grep -q "JAVA ROUNDTRIP MATCH" /tmp/java.out
+          kill "$(cat /tmp/agent.pid)" || true

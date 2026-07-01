@@ -18,8 +18,6 @@ static CK_RV PRV_C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTe
 static CK_RV PRV_C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount, CK_OBJECT_HANDLE_PTR phNewObject) { return CKR_FUNCTION_NOT_SUPPORTED; }
 static CK_RV PRV_C_GetObjectSize(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ULONG_PTR pulSize) { return CKR_FUNCTION_NOT_SUPPORTED; }
 static CK_RV PRV_C_SetAttributeValue(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount) { return CKR_FUNCTION_NOT_SUPPORTED; }
-static CK_RV PRV_C_EncryptInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey) { return CKR_FUNCTION_NOT_SUPPORTED; }
-static CK_RV PRV_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen, CK_BYTE_PTR pEncryptedData, CK_ULONG_PTR pulEncryptedDataLen) { return CKR_FUNCTION_NOT_SUPPORTED; }
 static CK_RV PRV_C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen, CK_BYTE_PTR pEncryptedPart, CK_ULONG_PTR pulEncryptedPartLen) { return CKR_FUNCTION_NOT_SUPPORTED; }
 static CK_RV PRV_C_EncryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastEncryptedPart, CK_ULONG_PTR pulLastEncryptedPartLen) { return CKR_FUNCTION_NOT_SUPPORTED; }
 static CK_RV PRV_C_DecryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedPart, CK_ULONG ulEncryptedPartLen, CK_BYTE_PTR pPart, CK_ULONG_PTR pulPartLen) { return CKR_FUNCTION_NOT_SUPPORTED; }
@@ -80,8 +78,8 @@ static CK_FUNCTION_LIST functionList = {
     .C_FindObjectsInit = C_FindObjectsInit,
     .C_FindObjects = C_FindObjects,
     .C_FindObjectsFinal = C_FindObjectsFinal,
-    .C_EncryptInit = PRV_C_EncryptInit,
-    .C_Encrypt = PRV_C_Encrypt,
+    .C_EncryptInit = C_EncryptInit,
+    .C_Encrypt = C_Encrypt,
     .C_EncryptUpdate = PRV_C_EncryptUpdate,
     .C_EncryptFinal = PRV_C_EncryptFinal,
     .C_DecryptInit = C_DecryptInit,

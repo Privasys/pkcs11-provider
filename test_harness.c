@@ -130,14 +130,30 @@ int main(int argc, char **argv) {
   if (an > 0) {
     CK_BYTE iv[12] = {0};
     CK_GCM_PARAMS gcm = {iv, sizeof iv, 96, NULL_PTR, 0, 128};
+
+    /* Encrypt -> Decrypt round-trip with a caller-supplied IV (the vault seals
+     * with it; against a real vault the recovered plaintext matches). */
+    CK_MECHANISM em = {CKM_AES_GCM, &gcm, sizeof gcm};
+    rv = fl->C_EncryptInit(sess, &em, aesobjs[0]);
+    printf("C_EncryptInit      rv=0x%08lx\n", rv);
+    CK_BYTE ptin[] = "roundtrip-plaintext";
+    CK_BYTE ct[64]; CK_ULONG ctlen = 0;
+    rv = fl->C_Encrypt(sess, ptin, sizeof ptin - 1, NULL_PTR, &ctlen);
+    printf("C_Encrypt(len)     rv=0x%08lx  len=%lu\n", rv, (unsigned long)ctlen);
+    ctlen = sizeof ct;
+    rv = fl->C_Encrypt(sess, ptin, sizeof ptin - 1, ct, &ctlen);
+    printf("C_Encrypt          rv=0x%08lx  ctlen=%lu\n", rv, (unsigned long)ctlen);
+
     CK_MECHANISM dm = {CKM_AES_GCM, &gcm, sizeof gcm};
     rv = fl->C_DecryptInit(sess, &dm, aesobjs[0]);
     printf("C_DecryptInit      rv=0x%08lx\n", rv);
-    CK_BYTE ctin[] = "ciphertext-bytes-here";
     CK_BYTE out[64]; CK_ULONG outlen = sizeof out;
-    rv = fl->C_Decrypt(sess, ctin, sizeof ctin - 1, out, &outlen);
+    rv = fl->C_Decrypt(sess, ct, ctlen, out, &outlen);
     out[outlen < sizeof out ? outlen : sizeof out - 1] = 0;
     printf("C_Decrypt          rv=0x%08lx  outlen=%lu  pt='%s'\n", rv, (unsigned long)outlen, out);
+    printf("ROUNDTRIP          %s\n",
+           (outlen == sizeof ptin - 1 && memcmp(out, ptin, outlen) == 0) ? "MATCH" : "MISMATCH");
+
     rv = fl->C_DestroyObject(sess, aesobjs[0]);
     printf("C_DestroyObject    rv=0x%08lx\n", rv);
   }
