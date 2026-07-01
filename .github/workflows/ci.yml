@@ -41,3 +41,22 @@ jobs:
           pkcs11-tool --module ./libprivasys_pkcs11.so --list-objects
           pkcs11-tool --module ./libprivasys_pkcs11.so --list-mechanisms
           kill "$(cat /tmp/agent.pid)" || true
+
+      - name: Third-party consumer (OpenSSL pkcs11-provider)
+        run: |
+          sudo apt-get install -y -qq pkcs11-provider
+          python3 tools/mock_agent.py & echo $! > /tmp/agent.pid
+          sleep 1
+          export PRIVASYS_PKCS11_VAULT=ci-vault PRIVASYS_PKCS11_AGENT=http://127.0.0.1:8210
+          export PKCS11_PROVIDER_MODULE=$PWD/libprivasys_pkcs11.so
+          # The provider builds the EVP_PKEY public half from CKA_EC_POINT.
+          openssl pkey -provider pkcs11 -provider default -pubin \
+            -in "pkcs11:object=tls-key;type=public" -pubout -text | grep "P-256"
+          # Mint a self-signed cert with the module key (the streaming sign
+          # path). The mock agent signs with a canned value, so only the
+          # plumbing is checked here; signature validity is covered by the
+          # live-vault TLS e2e.
+          openssl req -new -x509 -provider pkcs11 -provider default \
+            -key "pkcs11:object=tls-key;type=private" -subj "/CN=ci" -days 1 -out /tmp/c.pem
+          test -s /tmp/c.pem
+          kill "$(cat /tmp/agent.pid)" || true

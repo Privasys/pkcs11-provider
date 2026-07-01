@@ -11,9 +11,12 @@ import (
 )
 
 // An object is one vault key. An EC signing key surfaces as a CKO_PRIVATE_KEY
-// (CKK_EC) — the consumption surface (C_Sign) the vault backs in-enclave; an AES
-// key surfaces as a CKO_SECRET_KEY (CKK_AES) for wrap/unwrap (inc.2). Handles are
-// 1-based indices into objTable, refreshed from the agent on C_FindObjectsInit.
+// (CKK_EC) — the consumption surface (C_Sign) the vault backs in-enclave — plus
+// a CKO_PUBLIC_KEY twin (same label/ID) carrying CKA_EC_POINT, which OpenSSL's
+// pkcs11-provider pairs with the private half to build the EVP_PKEY for certs
+// and TLS. An AES key surfaces as a CKO_SECRET_KEY (CKK_AES) for wrap/unwrap
+// (inc.2). Handles are 1-based indices into objTable, refreshed from the agent
+// on C_FindObjectsInit.
 type objInfo struct {
 	name    string
 	class   C.CK_OBJECT_CLASS
@@ -26,6 +29,13 @@ var oidP256 = []byte{0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07}
 var (
 	objMu    sync.Mutex
 	objTable []objInfo
+
+	// ecPointCache caches each EC key's CKA_EC_POINT value (a DER OCTET STRING
+	// wrapping the uncompressed SEC1 point), fetched lazily from the agent —
+	// consumers query it repeatedly per handshake and the point is immutable for
+	// a key version.
+	ecPointMu    sync.Mutex
+	ecPointCache = map[string][]byte{}
 )
 
 func refreshObjects() C.CK_RV {
@@ -33,11 +43,13 @@ func refreshObjects() C.CK_RV {
 	if err != nil {
 		return C.CKR_DEVICE_ERROR
 	}
-	tbl := make([]objInfo, 0, len(keys))
+	tbl := make([]objInfo, 0, len(keys)*2)
 	for _, k := range keys {
 		switch k.kind() {
 		case "EC":
-			tbl = append(tbl, objInfo{name: k.Name, class: C.CKO_PRIVATE_KEY, keyType: C.CKK_EC})
+			tbl = append(tbl,
+				objInfo{name: k.Name, class: C.CKO_PRIVATE_KEY, keyType: C.CKK_EC},
+				objInfo{name: k.Name, class: C.CKO_PUBLIC_KEY, keyType: C.CKK_EC})
 		case "AES":
 			tbl = append(tbl, objInfo{name: k.Name, class: C.CKO_SECRET_KEY, keyType: C.CKK_AES})
 		}
@@ -46,6 +58,29 @@ func refreshObjects() C.CK_RV {
 	objTable = tbl
 	objMu.Unlock()
 	return C.CKR_OK
+}
+
+// ecPointDER returns the CKA_EC_POINT value for the named key: the uncompressed
+// point wrapped in a DER OCTET STRING (04 41 04 || X || Y for P-256), per the
+// PKCS#11 EC key attribute spec.
+func ecPointDER(name string) ([]byte, error) {
+	ecPointMu.Lock()
+	if v, ok := ecPointCache[name]; ok {
+		ecPointMu.Unlock()
+		return v, nil
+	}
+	ecPointMu.Unlock()
+	point, err := agentPublicEC(name)
+	if err != nil {
+		return nil, err
+	}
+	der := make([]byte, 0, len(point)+2)
+	der = append(der, 0x04, byte(len(point)))
+	der = append(der, point...)
+	ecPointMu.Lock()
+	ecPointCache[name] = der
+	ecPointMu.Unlock()
+	return der, nil
 }
 
 func objByHandle(h uint) (objInfo, bool) {
@@ -236,11 +271,23 @@ func C_GetAttributeValue(h C.CK_SESSION_HANDLE, hObject C.CK_OBJECT_HANDLE, pTem
 			setAttr(a, ulongBytes(C.CK_ULONG(o.keyType)))
 		case C.CKA_LABEL, C.CKA_ID:
 			setAttr(a, []byte(o.name))
-		case C.CKA_TOKEN, C.CKA_PRIVATE:
+		case C.CKA_TOKEN:
 			setAttr(a, []byte{1})
+		case C.CKA_PRIVATE:
+			b := byte(1)
+			if o.class == C.CKO_PUBLIC_KEY {
+				b = 0
+			}
+			setAttr(a, []byte{b})
 		case C.CKA_SIGN:
 			b := byte(0)
 			if o.class == C.CKO_PRIVATE_KEY {
+				b = 1
+			}
+			setAttr(a, []byte{b})
+		case C.CKA_VERIFY:
+			b := byte(0)
+			if o.class == C.CKO_PUBLIC_KEY {
 				b = 1
 			}
 			setAttr(a, []byte{b})
@@ -250,9 +297,31 @@ func C_GetAttributeValue(h C.CK_SESSION_HANDLE, hObject C.CK_OBJECT_HANDLE, pTem
 				b = 1
 			}
 			setAttr(a, []byte{b})
+		case C.CKA_SENSITIVE:
+			// Vault key material never leaves the enclave.
+			b := byte(0)
+			if o.class != C.CKO_PUBLIC_KEY {
+				b = 1
+			}
+			setAttr(a, []byte{b})
+		case C.CKA_EXTRACTABLE, C.CKA_ALWAYS_AUTHENTICATE, C.CKA_MODIFIABLE:
+			setAttr(a, []byte{0})
 		case C.CKA_EC_PARAMS:
 			if isEC {
 				setAttr(a, oidP256)
+			} else {
+				a.ulValueLen = C.CK_UNAVAILABLE_INFORMATION
+				rv = C.CKR_ATTRIBUTE_TYPE_INVALID
+			}
+		case C.CKA_EC_POINT:
+			if isEC {
+				der, err := ecPointDER(o.name)
+				if err != nil {
+					a.ulValueLen = C.CK_UNAVAILABLE_INFORMATION
+					rv = C.CKR_ATTRIBUTE_TYPE_INVALID
+					break
+				}
+				setAttr(a, der)
 			} else {
 				a.ulValueLen = C.CK_UNAVAILABLE_INFORMATION
 				rv = C.CKR_ATTRIBUTE_TYPE_INVALID

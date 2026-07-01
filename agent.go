@@ -72,6 +72,61 @@ func agentListKeys() ([]agentKey, error) {
 	return wrapped.Value, nil
 }
 
+// agentPublicEC fetches the named signing key's public JWK (agent GET
+// /keys/{name}) and returns the uncompressed SEC1 point 0x04||X||Y (65 bytes
+// for P-256). Backs CKA_EC_POINT, which OpenSSL's pkcs11-provider needs to
+// build the EVP_PKEY public half for certs and TLS.
+func agentPublicEC(name string) ([]byte, error) {
+	resp, err := httpClient.Get(agentBase() + "/keys/" + url.PathEscape(name))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("agent public: HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	// `vault serve` nests the JWK under "key"; a bare JWK is accepted too.
+	type ecJWK struct {
+		Kty string `json:"kty"`
+		X   string `json:"x"`
+		Y   string `json:"y"`
+	}
+	var wrapped struct {
+		Key ecJWK `json:"key"`
+	}
+	var jwk ecJWK
+	if err := json.Unmarshal(body, &wrapped); err == nil && wrapped.Key.X != "" {
+		jwk = wrapped.Key
+	} else if err := json.Unmarshal(body, &jwk); err != nil || jwk.X == "" || jwk.Y == "" {
+		return nil, fmt.Errorf("agent public: bad JWK: %s", string(body))
+	}
+	x, err := b64any(jwk.X)
+	if err != nil {
+		return nil, fmt.Errorf("agent public: decode x: %w", err)
+	}
+	y, err := b64any(jwk.Y)
+	if err != nil {
+		return nil, fmt.Errorf("agent public: decode y: %w", err)
+	}
+	point := make([]byte, 0, 65)
+	point = append(point, 0x04)
+	point = append(point, leftPad32(x)...)
+	point = append(point, leftPad32(y)...)
+	return point, nil
+}
+
+// leftPad32 left-pads a big-endian coordinate to 32 bytes (JWK base64url drops
+// leading zeros).
+func leftPad32(b []byte) []byte {
+	if len(b) >= 32 {
+		return b[len(b)-32:]
+	}
+	out := make([]byte, 32)
+	copy(out[32-len(b):], b)
+	return out
+}
+
 // agentSign asks the agent to sign msg with the named key. alg is a JOSE alg
 // (ES256). When prehashed is set, msg is a 32-byte SHA-256 digest the vault signs
 // raw (CKM_ECDSA); otherwise msg is the message the vault hashes (CKM_ECDSA_SHA256).

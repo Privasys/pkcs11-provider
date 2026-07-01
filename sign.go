@@ -39,10 +39,97 @@ func C_SignInit(h C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM_PTR, hKey C.CK_
 	ok = withSession(uint(h), func(s *session) {
 		s.signKey = uint(hKey)
 		s.signMech = uint(mech)
+		s.signBuf = nil
 	})
 	if !ok {
 		return C.CKR_SESSION_HANDLE_INVALID
 	}
+	return C.CKR_OK
+}
+
+// C_SignUpdate accumulates message parts for the streaming sign path (OpenSSL's
+// pkcs11-provider signs certs/handshakes via SignInit → SignUpdate → SignFinal).
+// The vault signs one-shot, so parts buffer locally until C_SignFinal.
+//
+//export C_SignUpdate
+func C_SignUpdate(h C.CK_SESSION_HANDLE, pPart C.CK_BYTE_PTR, ulPartLen C.CK_ULONG) C.CK_RV {
+	if !isInited() {
+		return C.CKR_CRYPTOKI_NOT_INITIALIZED
+	}
+	if pPart == nil && ulPartLen > 0 {
+		return C.CKR_ARGUMENTS_BAD
+	}
+	rv := C.CK_RV(C.CKR_OK)
+	ok := withSession(uint(h), func(s *session) {
+		if s.signKey == 0 {
+			rv = C.CKR_OPERATION_NOT_INITIALIZED
+			return
+		}
+		if ulPartLen > 0 {
+			s.signBuf = append(s.signBuf, C.GoBytes(unsafe.Pointer(pPart), C.int(ulPartLen))...)
+		}
+	})
+	if !ok {
+		return C.CKR_SESSION_HANDLE_INVALID
+	}
+	return rv
+}
+
+//export C_SignFinal
+func C_SignFinal(h C.CK_SESSION_HANDLE, pSignature C.CK_BYTE_PTR, pulSignatureLen C.CK_ULONG_PTR) C.CK_RV {
+	if !isInited() {
+		return C.CKR_CRYPTOKI_NOT_INITIALIZED
+	}
+	if pulSignatureLen == nil {
+		return C.CKR_ARGUMENTS_BAD
+	}
+	var keyHandle, mech uint
+	var msg []byte
+	rv := C.CK_RV(C.CKR_OK)
+	ok := withSession(uint(h), func(s *session) {
+		if s.signKey == 0 {
+			rv = C.CKR_OPERATION_NOT_INITIALIZED
+			return
+		}
+		keyHandle = s.signKey
+		mech = s.signMech
+		msg = s.signBuf
+	})
+	if !ok {
+		return C.CKR_SESSION_HANDLE_INVALID
+	}
+	if rv != C.CKR_OK {
+		return rv
+	}
+
+	// Length query keeps the operation active (the caller comes back with a
+	// buffer).
+	if pSignature == nil {
+		*pulSignatureLen = p256SigLen
+		return C.CKR_OK
+	}
+	if *pulSignatureLen < p256SigLen {
+		*pulSignatureLen = p256SigLen
+		return C.CKR_BUFFER_TOO_SMALL
+	}
+
+	o, ok := objByHandle(keyHandle)
+	if !ok {
+		return C.CKR_KEY_HANDLE_INVALID
+	}
+	prehashed := mech == uint(C.CKM_ECDSA)
+	sig, err := agentSign(o.name, "ES256", msg, prehashed)
+	if err != nil {
+		return C.CKR_FUNCTION_FAILED
+	}
+	if len(sig) != p256SigLen {
+		return C.CKR_FUNCTION_FAILED
+	}
+	dst := unsafe.Slice((*byte)(unsafe.Pointer(pSignature)), p256SigLen)
+	copy(dst, sig)
+	*pulSignatureLen = p256SigLen
+
+	withSession(uint(h), func(s *session) { s.signKey = 0; s.signMech = 0; s.signBuf = nil })
 	return C.CKR_OK
 }
 
@@ -104,6 +191,6 @@ func C_Sign(h C.CK_SESSION_HANDLE, pData C.CK_BYTE_PTR, ulDataLen C.CK_ULONG, pS
 	*pulSignatureLen = p256SigLen
 
 	// One-shot: clear the operation.
-	withSession(uint(h), func(s *session) { s.signKey = 0; s.signMech = 0 })
+	withSession(uint(h), func(s *session) { s.signKey = 0; s.signMech = 0; s.signBuf = nil })
 	return C.CKR_OK
 }

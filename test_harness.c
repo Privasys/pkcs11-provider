@@ -63,13 +63,60 @@ int main(int argc, char **argv) {
     rv = fl->C_GetAttributeValue(sess, objs[0], la, 1);
     printf("C_GetAttributeValue rv=0x%08lx label='%s'\n", rv, klabel);
 
-    CK_MECHANISM mech = {CKM_ECDSA_SHA256, NULL_PTR, 0};
+    /* CKM_ECDSA: sign a pre-computed SHA-256 digest raw (the TLS / code-signer
+     * path). digest = SHA-256("hello world"), so verify.py (which SHA-256s
+     * "hello world") checks it. */
+    CK_BYTE digest[32] = {0xb9, 0x4d, 0x27, 0xb9, 0x93, 0x4d, 0x3e, 0x08, 0xa5, 0x2e,
+                          0x52, 0xd7, 0xda, 0x7d, 0xab, 0xfa, 0xc4, 0x84, 0xef, 0xe3,
+                          0x7a, 0x53, 0x80, 0xee, 0x90, 0x88, 0xf7, 0xac, 0xe2, 0xef,
+                          0xcd, 0xe9};
+    CK_MECHANISM mech = {CKM_ECDSA, NULL_PTR, 0};
     rv = fl->C_SignInit(sess, &mech, objs[0]);
-    printf("C_SignInit         rv=0x%08lx\n", rv);
-    CK_BYTE data[] = "hello world";
+    printf("C_SignInit(CKM_ECDSA) rv=0x%08lx\n", rv);
     CK_BYTE sig[128]; CK_ULONG siglen = sizeof sig;
-    rv = fl->C_Sign(sess, data, sizeof data - 1, sig, &siglen);
-    printf("C_Sign             rv=0x%08lx  siglen=%lu\n", rv, (unsigned long)siglen);
+    rv = fl->C_Sign(sess, digest, sizeof digest, sig, &siglen);
+    printf("C_Sign(prehashed)  rv=0x%08lx  siglen=%lu\n", rv, (unsigned long)siglen);
+    if (rv == CKR_OK) {
+      printf("SIG=");
+      for (CK_ULONG i = 0; i < siglen; i++) printf("%02x", sig[i]);
+      printf("\n");
+    }
+  }
+
+  /* Public-key twin: OpenSSL's pkcs11-provider pairs the private key with a
+   * CKO_PUBLIC_KEY carrying CKA_EC_POINT (DER OCTET STRING, 67 bytes for an
+   * uncompressed P-256 point). */
+  CK_OBJECT_CLASS pub = CKO_PUBLIC_KEY;
+  CK_ATTRIBUTE ptmpl[] = {{CKA_CLASS, &pub, sizeof pub}};
+  fl->C_FindObjectsInit(sess, ptmpl, 1);
+  CK_OBJECT_HANDLE pubobjs[8]; CK_ULONG pn = 0;
+  fl->C_FindObjects(sess, pubobjs, 8, &pn);
+  fl->C_FindObjectsFinal(sess);
+  printf("Public keys found  count=%lu\n", (unsigned long)pn);
+  if (pn > 0) {
+    CK_BYTE point[80];
+    CK_ATTRIBUTE pa[] = {{CKA_EC_POINT, point, sizeof point}};
+    rv = fl->C_GetAttributeValue(sess, pubobjs[0], pa, 1);
+    printf("CKA_EC_POINT       rv=0x%08lx  len=%lu  der=%02x%02x point=%02x...\n",
+           rv, (unsigned long)pa[0].ulValueLen, point[0], point[1], point[2]);
+  }
+
+  /* Streaming sign (SignInit -> SignUpdate x2 -> SignFinal), the path OpenSSL's
+   * pkcs11-provider drives for certs and TLS handshakes. */
+  if (on > 0) {
+    CK_MECHANISM smech = {CKM_ECDSA_SHA256, NULL_PTR, 0};
+    rv = fl->C_SignInit(sess, &smech, objs[0]);
+    printf("C_SignInit(stream) rv=0x%08lx\n", rv);
+    rv = fl->C_SignUpdate(sess, (CK_BYTE_PTR)"hello ", 6);
+    printf("C_SignUpdate       rv=0x%08lx\n", rv);
+    rv = fl->C_SignUpdate(sess, (CK_BYTE_PTR)"world", 5);
+    printf("C_SignUpdate       rv=0x%08lx\n", rv);
+    CK_BYTE ssig[128]; CK_ULONG ssiglen = 0;
+    rv = fl->C_SignFinal(sess, NULL_PTR, &ssiglen);
+    printf("C_SignFinal(len)   rv=0x%08lx  len=%lu\n", rv, (unsigned long)ssiglen);
+    ssiglen = sizeof ssig;
+    rv = fl->C_SignFinal(sess, ssig, &ssiglen);
+    printf("C_SignFinal        rv=0x%08lx  siglen=%lu\n", rv, (unsigned long)ssiglen);
   }
 
   /* Find AES secret keys -> Decrypt (agent unwrapKey) + Destroy (agent DELETE). */

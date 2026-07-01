@@ -14,6 +14,7 @@ package main
 import "C"
 
 import (
+	"crypto/rand"
 	"os"
 	"sync"
 	"unsafe"
@@ -256,4 +257,40 @@ func C_Logout(h C.CK_SESSION_HANDLE) C.CK_RV {
 		return C.CKR_SESSION_HANDLE_INVALID
 	}
 	return C.CKR_OK
+}
+
+// C_GenerateRandom serves the host CSPRNG (Go crypto/rand). Consumers like
+// OpenSSL's pkcs11-provider use the token as a RAND source for local nonces;
+// this is not vault key material and needs no enclave round-trip.
+//
+//export C_GenerateRandom
+func C_GenerateRandom(h C.CK_SESSION_HANDLE, pRandomData C.CK_BYTE_PTR, ulRandomLen C.CK_ULONG) C.CK_RV {
+	if !isInited() {
+		return C.CKR_CRYPTOKI_NOT_INITIALIZED
+	}
+	if !sessionValid(uint(h)) {
+		return C.CKR_SESSION_HANDLE_INVALID
+	}
+	if pRandomData == nil && ulRandomLen > 0 {
+		return C.CKR_ARGUMENTS_BAD
+	}
+	if ulRandomLen == 0 {
+		return C.CKR_OK
+	}
+	buf := unsafe.Slice((*byte)(unsafe.Pointer(pRandomData)), int(ulRandomLen))
+	if _, err := rand.Read(buf); err != nil {
+		return C.CKR_FUNCTION_FAILED
+	}
+	return C.CKR_OK
+}
+
+//export C_SeedRandom
+func C_SeedRandom(h C.CK_SESSION_HANDLE, pSeed C.CK_BYTE_PTR, ulSeedLen C.CK_ULONG) C.CK_RV {
+	if !isInited() {
+		return C.CKR_CRYPTOKI_NOT_INITIALIZED
+	}
+	if !sessionValid(uint(h)) {
+		return C.CKR_SESSION_HANDLE_INVALID
+	}
+	return C.CKR_RANDOM_SEED_NOT_SUPPORTED
 }

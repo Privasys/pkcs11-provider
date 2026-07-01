@@ -11,9 +11,10 @@ type session struct {
 	findMatches []uint
 	findPos     int
 
-	// SignInit/Sign one-shot state.
-	signKey  uint // object handle of the active signing key (0 = none)
-	signMech uint // active CKM_*
+	// SignInit/Sign one-shot + SignUpdate/SignFinal streaming state.
+	signKey  uint   // object handle of the active signing key (0 = none)
+	signMech uint   // active CKM_*
+	signBuf  []byte // accumulated message for the streaming (Update/Final) path
 
 	// DecryptInit/Decrypt one-shot state (CKM_AES_GCM).
 	decryptKey uint   // object handle of the active AES key (0 = none)

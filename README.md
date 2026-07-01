@@ -38,20 +38,38 @@ stay in the native API (the CLI / Azure-REST facade / KMIP), because PKCS#11
 cannot express attested-measurement principals, WebAuthn step-up, or policy
 authoring. Step-up-gated ops **fail closed** over PKCS#11.
 
-Implemented (inc.1): `C_Initialize`/`Finalize`, `C_GetInfo`, slot/token info,
-mechanism list, sessions, `C_Login` (session-attach), `C_FindObjects*`,
-`C_GetAttributeValue`, `C_SignInit`/`C_Sign`. Next (inc.2):
-`C_Decrypt`/`C_UnwrapKey`/`C_WrapKey`, `C_DestroyObject`. Then (inc.3): OpenSSL
-`pkcs11-provider` end-to-end.
+Implemented: `C_Initialize`/`Finalize`, `C_GetInfo`, slot/token info, mechanism
+list, sessions, `C_Login` (session-attach), `C_FindObjects*` (each EC key
+surfaces as a private key **plus a public-key twin** carrying `CKA_EC_POINT`),
+`C_GetAttributeValue`, `C_SignInit`/`C_Sign` and the streaming
+`C_SignUpdate`/`C_SignFinal`, `C_Decrypt` (AES-GCM via the agent `unwrapKey`),
+`C_DestroyObject`, `C_GenerateRandom` (host CSPRNG — local nonces, not vault
+material). Every remaining `CK_FUNCTION_LIST` slot is a spec-appropriate
+not-supported stub — the list is complete, as the spec requires (consumers call
+through it without NULL checks).
 
-### Signing / the pre-hashed dependency
+### Signing
 
-`CKM_ECDSA_SHA256` (sign a message) works today — the vault hashes
-(ECDSA-P256-SHA256) and returns raw `r‖s`, exactly what PKCS#11 expects.
-`CKM_ECDSA` (sign a **pre-computed digest** — what TLS and most code-signers use)
-is advertised but **fails closed** until the vault gains a raw/pre-hashed sign
-mode; it must not double-hash. This is Phase 4's one real dependency for the
-headline confidential-TLS-server use case.
+`CKM_ECDSA_SHA256` signs a message (the vault hashes, ECDSA-P256-SHA256) and
+`CKM_ECDSA` signs a **pre-computed digest** (what TLS and most code-signers
+use) via the vault's raw/pre-hashed sign mode. Both return raw `r‖s`, exactly
+what PKCS#11 expects.
+
+### OpenSSL (`pkcs11-provider`)
+
+The module works under OpenSSL 3.x with the
+[pkcs11-provider](https://github.com/latchset/pkcs11-provider):
+
+```
+export PKCS11_PROVIDER_MODULE=/path/to/libprivasys_pkcs11.so
+export PRIVASYS_PKCS11_VAULT=<vault-id>          # privasys vault serve is running
+# mint a cert whose key lives in the vault
+openssl req -new -x509 -provider pkcs11 -provider default \
+  -key "pkcs11:object=<key-name>;type=private" -subj "/CN=example" -out cert.pem
+# serve TLS with the vault-held key (the handshake signature happens in-enclave)
+openssl s_server -provider pkcs11 -provider default \
+  -key "pkcs11:object=<key-name>;type=private" -cert cert.pem -accept 4443 -www
+```
 
 ## Build & test
 
