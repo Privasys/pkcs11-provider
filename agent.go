@@ -24,10 +24,24 @@ func agentBase() string {
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
-// agentKey is one key as the agent's GET /keys lists it.
+// agentKey is one key as the agent's GET /keys lists it. `vault serve` reports
+// keyType ("P256SigningKey"/"Aes256GcmKey"); a JOSE-shaped agent may report kty
+// ("EC"/"oct") instead — accept both.
 type agentKey struct {
-	Name string `json:"name"`
-	Kty  string `json:"kty"` // "EC" (P-256 signing) | "oct" (AES) | ...
+	Name    string `json:"name"`
+	KeyType string `json:"keyType"`
+	Kty     string `json:"kty"`
+}
+
+// kind coarsely classifies the key: "EC" (P-256 signing) or "AES" (256-GCM).
+func (k agentKey) kind() string {
+	switch {
+	case k.KeyType == "P256SigningKey" || k.Kty == "EC":
+		return "EC"
+	case k.KeyType == "Aes256GcmKey" || k.Kty == "oct" || k.Kty == "AES":
+		return "AES"
+	}
+	return ""
 }
 
 func agentListKeys() ([]agentKey, error) {

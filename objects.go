@@ -35,10 +35,10 @@ func refreshObjects() C.CK_RV {
 	}
 	tbl := make([]objInfo, 0, len(keys))
 	for _, k := range keys {
-		switch k.Kty {
+		switch k.kind() {
 		case "EC":
 			tbl = append(tbl, objInfo{name: k.Name, class: C.CKO_PRIVATE_KEY, keyType: C.CKK_EC})
-		case "oct", "AES":
+		case "AES":
 			tbl = append(tbl, objInfo{name: k.Name, class: C.CKO_SECRET_KEY, keyType: C.CKK_AES})
 		}
 	}

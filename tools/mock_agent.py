@@ -17,9 +17,12 @@ class H(http.server.BaseHTTPRequestHandler):
         self.wfile.write(b)
 
     def do_GET(self):
+        # Matches `privasys vault serve` GET /keys: {"value":[{name, keyType}]}.
         if self.path == "/keys":
-            self._j(200, [{"name": "tls-key", "kty": "EC"},
-                          {"name": "data-key", "kty": "oct"}])
+            self._j(200, {"value": [
+                {"name": "tls-key", "keyType": "P256SigningKey"},
+                {"name": "data-key", "keyType": "Aes256GcmKey"},
+            ]})
         else:
             self._j(404, {"error": "not found"})
 
